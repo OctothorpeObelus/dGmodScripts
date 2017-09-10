@@ -1,0 +1,1160 @@
+--@name dGUI
+--@author D.
+--@include fontAwesome.txt
+
+require("fontAwesome.txt")
+
+function render.drawCircle( x, y, radius, seg )
+    local cir = {}
+
+    table.insert( cir, { x = x, y = y, u = 0.5, v = 0.5 } )
+    for i = 0, seg do
+        local a = math.rad( ( i / seg ) * -360 )
+        table.insert( cir, { x = x + math.sin( a ) * radius, y = y + math.cos( a ) * radius, u = math.sin( a ) / 2 + 0.5, v = math.cos( a ) / 2 + 0.5 } )
+    end
+
+    local a = math.rad( 0 ) -- This is needed for non absolute segment counts
+    table.insert( cir, { x = x + math.sin( a ) * radius, y = y + math.cos( a ) * radius, u = math.sin( a ) / 2 + 0.5, v = math.cos( a ) / 2 + 0.5 } )
+    render.drawPoly(cir)
+end
+
+local dgui = {
+    _DEBUG = false,
+    _ENABLE_SCISSOR = true,
+    FPS = 300,
+    context = {
+        curX = 0,
+        curY = 0,
+        hovered = false,
+        pressed = false,
+        focused = false,
+    }
+}
+local InputCaughtLastFrame = false
+---------------
+------
+---------------
+local debugFont = render.createFont("Roboto Mono", 20, 400, true)
+local defaultFont = render.createFont("Roboto", 40, 500, true)
+local keyFont = render.createFont("Roboto", 25, 500, true)
+
+render.createRenderTarget("dgui_buffer")
+
+---------------
+------
+---------------
+local DGUI_CLASSES = {}
+local DGUI_ROOT = {}
+local LAYOUT_QUEUE = {}
+local INPUT_QUEUE = {}
+
+---------------
+------
+---------------
+local FOCUSED_OBJ = nil
+local HOVERED_OBJ = nil
+local PRESSED_OBJ = nil
+
+---------------
+------
+---------------
+local UID = 0
+local USE_KEY,USE_KEY_NAME = input.lookupBinding("+use")
+local lTime = 0
+local deltaTime = 0
+
+---------------
+------
+---------------
+local function mc(col,m)
+    local r,g,b,a = unpack(col)
+    return Color(r * m, g * m, b * m, a)
+end
+
+local function mixColor(c1,c2, prog)
+    return c1*prog + c2*(1-prog)
+end
+
+local function inBox(x, y, x2, y2, w, h)
+    return x >= x2 and x <= x2+w and y >= y2 and y <= y2+h
+end
+
+
+local function initElement(class,obj)
+    local meta = getmetatable(class)
+    if meta.__super then
+
+        initElement(meta.__super,obj)
+    end
+    if class.init then
+	       class.init(obj)
+        obj:fixPos()
+
+    end
+end
+
+local function addToInputQueue(pnl)
+    table.insert(INPUT_QUEUE, pnl)
+    for k,v in pairs(pnl.children) do
+        addToInputQueue(v)
+    end
+end
+
+local function renderObject(obj, minx, miny, maxx, maxy)
+    if not obj.enabled then return end
+
+    if maxx <= minx or maxy <= miny then
+        obj.visible = false
+        return
+    end
+
+    obj.visible = true
+    obj.realX = minx
+    obj.realY = miny
+    obj.realWidth = maxx - minx
+    obj.realHeight = maxy - miny
+
+
+
+    if dgui._ENABLE_SCISSOR then
+        render.enableScissorRect(minx*2, miny*2, maxx*2, maxy*2)
+    end
+
+    render.pushMatrix(obj.matrix,true)
+        local w,h = obj.width,obj.height
+        obj.width = obj.width * 2
+        obj.height = obj.height * 2
+
+        dgui.runEvent(obj, "render")
+
+        obj.width = w
+        obj.height = h
+
+    render.popMatrix()
+
+    if dgui._DEBUG then
+        render.setColor(Color(255,0,255))
+        render.setFont(debugFont)
+        local hovertext = HOVERED_OBJ == obj and "\n|HOVERED|" or ""
+        local presstext = PRESSED_OBJ == obj and "\n|PRESSED|" or ""
+        local dfr = "\n|DFR:"..obj.DFR.."|"
+        local postext = obj.x..","..obj.y.."|"
+        render.drawText(obj.realX * 2, obj.realY * 2, obj.name..postext..hovertext..presstext..dfr)
+
+        render.setColor(Color(255,0,0))
+
+        render.drawRect(obj.realX * 2, obj.realY * 2, obj.realWidth * 2, 1)
+        render.drawRect(obj.realX * 2, obj.realY * 2 + obj.realHeight * 2 -1, obj.realWidth * 2, 1)
+
+        render.drawRect(obj.realX * 2, obj.realY * 2, 1, obj.realHeight * 2)
+        render.drawRect(obj.realX * 2 + obj.realWidth * 2 - 1, obj.realY * 2, 1, obj.realHeight * 2)
+
+        render.drawLine(minx*2,miny*2,maxx*2,maxy*2)
+    end
+
+
+
+
+    if #obj.children > 0 then
+        for k,v in pairs(obj.children) do
+
+            local maxx = maxx
+            local maxy = maxy
+            local minx = minx
+            local miny = miny
+
+            minx = math.max(minx, v.x)
+            miny = math.max(miny, v.y)
+
+            maxx = math.min(maxx, v.x + v.width)
+            maxy = math.min(maxy, v.y + v.height)
+
+            renderObject(v, minx, miny, maxx, maxy)
+        end
+    end
+    if not InputCaughtLastFrame and obj.catchFocus then
+        if inBox(dgui.cursorX or 0,dgui.cursorY or 0, obj.realX, obj.realY, obj.realWidth, obj.realHeight) then
+            NEW_HOVERED_OBJ = obj
+            InputCaughtLastFrame = true
+        end
+    end
+end
+
+---------------
+------
+---------------
+
+function dgui.runEvent(obj, eventName, ...)
+    if not obj or not obj.visible or not obj.enabled then return end
+    -- Setting up context
+    dgui.context.curX = ((dgui.cursorX or 0) - obj.x) * 2
+    dgui.context.curY = ((dgui.cursorY or 0) - obj.y) * 2
+
+    dgui.context.hovered = (obj == HOVERED_OBJ)
+    dgui.context.pressed = (obj == PRESSED_OBJ)
+    dgui.context.focused = (obj == FOCUSED_OBJ)
+
+    if obj[eventName] then
+        obj[eventName](obj, ...)
+    end
+    --
+
+end
+
+function dgui.rebuildInputQueue()
+    dgui.shouldRebuildInputTree = true
+end
+
+function dgui.register(name, tab, parent)
+    local superclass = DGUI_CLASSES[parent]
+    setmetatable(tab, {
+        __index = function(self, key)
+            if key ~= "constructor" and superclass then
+                return superclass[key]
+            end
+            return nil
+        end,
+        __super = superclass,
+        __tostring = function() return name or "unknown" end
+    })
+
+
+    DGUI_CLASSES[name] = tab
+end
+
+function dgui.create(name, parent,debugname)
+
+    local ret = setmetatable({}, {
+		      __index = DGUI_CLASSES[name]
+	   })
+    ret.uid = name.."_"..UID
+    UID = UID + 1
+    ret.name = debugname or name
+    ret.children = {}
+    ret.localX = 0
+    ret.localY = 0
+    ret.x = 0
+    ret.y = 0
+    ret.hovered = false
+    ret.width = 100
+    ret.height = 100
+    ret.realX = 0
+    ret.realY = 0
+    ret.realWidth = ret.width
+    ret.realHeight = ret.height
+    ret.catchFocus = true
+    ret.matrix = Matrix()
+    ret.enabled = true
+
+    initElement(DGUI_CLASSES[name], ret)
+
+    ret:setParent(parent)
+    return ret
+
+end
+
+function dgui.think()
+    local curX, curY = dgui.cursorX, dgui.cursorY
+    curX = curX or 0
+    curY = curY or 0
+    if dgui.rootNeedsSorting then
+        table.sort(DGUI_ROOT,function(a, b)
+            return (a.priority or 0) < (b.priority or 0)
+        end)
+        dgui.rootNeedsSorting = false
+        print("Sorting root")
+    end
+
+    if #LAYOUT_QUEUE > 0 then
+        table.sort(LAYOUT_QUEUE,function(a, b)
+            return (a.priority or 0) > (b.priority or 0)
+        end)
+        for k,v in pairs(LAYOUT_QUEUE) do
+            dgui.runEvent(v, "doLayout")
+            v.shouldPerformLayout  = false
+        end
+        LAYOUT_QUEUE = {}
+        print("Layouting")
+    end
+
+    local caught = false
+    if dgui.shouldRebuildInputTree then
+        INPUT_QUEUE = {}
+        for k,v in pairs(DGUI_ROOT) do
+            addToInputQueue(v)
+        end
+        local tab = {}
+        local c = #INPUT_QUEUE
+        for I = 1, c do
+            tab[I] = INPUT_QUEUE[c-I+1]
+        end
+        INPUT_QUEUE = tab
+        dgui.shouldRebuildInputTree = false
+        print("Rebuilding input tree")
+    end
+
+    --[[ That's old and slow, should be removed
+    local visible = 0
+    for k,v in ipairs(INPUT_QUEUE) do
+        if not v.enabled or not v.visible or not v.catchFocus then continue end
+        visible = visible + 1
+        if inBox(curX, curY, v.realX, v.realY, v.realWidth, v.realHeight) then
+            HOVERED_OBJ = v
+            break
+        end
+    end]]
+end
+
+function dgui.render()
+    dgui.cursorX, dgui.cursorY = render.cursorPos()
+    dgui.cursorX = dgui.cursorX or 0
+    dgui.cursorY = dgui.cursorY or 0
+
+    InputCaughtLastFrame = (dgui.cursorX == nil) -- if it's nil it means we dont need process input anyway, so mark it as processed
+
+    HOVERED_OBJ = NEW_HOVERED_OBJ --that's because hovered obj is actually frame late to optimise rendering, noone notices it anyway
+    NEW_HOVERED_OBJ = nil
+
+    deltaTime = timer.curtime() - lTime
+    if deltaTime > 1/dgui.FPS then
+
+        render.selectRenderTarget("dgui_buffer")
+        render.clear(Color(0,0,0,0))
+
+        for k,v in pairs(DGUI_ROOT) do
+            renderObject(v, v.x, v.y, v.x + v.width, v.y + v.height)
+        end
+
+        render.disableScissorRect()
+        render.selectRenderTarget()
+        lTime = timer.curtime()
+    end
+
+
+    render.setRenderTargetTexture("dgui_buffer")
+    render.setRGBA(255,255,255,255)
+    render.drawTexturedRect(0, 0, 512, 512)
+end
+
+function dgui.keyDown(key)
+    if key == USE_KEY then
+        dgui.setFocusedObject(HOVERED_OBJ)
+        PRESSED_OBJ = HOVERED_OBJ
+        dgui.runEvent(FOCUSED_OBJ, "onStartUsing")
+    end
+    dgui.runEvent(FOCUSED_OBJ, "onKeyDown", key)
+end
+
+function dgui.keyUp(key)
+
+    dgui.runEvent(FOCUSED_OBJ, "onKeyUp", key)
+
+    if key == USE_KEY then
+        dgui.runEvent(PRESSED_OBJ, "onStopUsing", key)
+        PRESSED_OBJ = nil
+    end
+end
+
+function dgui.setFocusedObject(obj)
+    if FOCUSED_OBJ == obj then return end
+    dgui.runEvent(FOCUSED_OBJ, "onLoseFocus")
+    FOCUSED_OBJ = obj
+    dgui.runEvent(FOCUSED_OBJ, "onFocus")
+end
+
+-------------
+--- Panel ---
+-------------
+
+local dPanel = {}
+
+dPanel.onKeyDown = _EMPTYFUNC_
+dPanel.onKeyUp = _EMPTYFUNC_
+dPanel.onStartUsing = _EMPTYFUNC_
+dPanel.onStopUsing = _EMPTYFUNC_
+dPanel.doLayout = _EMPTYFUNC_
+dPanel.onFocus = _EMPTYFUNC_
+dPanel.onLoseFocus = _EMPTYFUNC_
+
+
+function dPanel:performLayout()
+    if not self.shouldPerformLayout then
+        self.shouldPerformLayout = true
+        table.insert(LAYOUT_QUEUE,self)
+    end
+end
+
+function dPanel:init() -- Init function
+    self.color = Color(11, 11, 11)
+end
+
+function dPanel:enableInput(enable)
+    self.catchFocus = enable
+end
+
+function dPanel:setPos(x,y) -- Sets position
+    x = math.floor(x)
+    y = math.floor(y)
+
+    self.localX = x
+    self.localY = y
+    self:fixPos()
+
+end
+
+function dPanel:forceFocus()
+    dgui.setFocusedObject(self)
+end
+
+function dPanel:setSize(w,h)
+    w = math.floor(w)
+    h = math.floor(h)
+
+    self.width = w
+    self.height = h
+
+    if self.parent then
+        self.parent:performLayout()
+    end
+    self:performLayout()
+end
+
+function dPanel:setParent(parent) -- Sets parent
+    if parent == self then
+        error("You dumb moron, you cant parent to self!")
+    end
+    if not self.parent then
+        if table.hasValue(DGUI_ROOT,self) then
+            table.removeByValue(DGUI_ROOT, self)
+        end
+    else
+        table.removeByValue(parent.children, self)
+        performLayout(parent) -- Old one
+
+    end
+
+    self.parent = parent
+    if parent then
+        table.insert(parent.children, self)
+        self.DFR = self.parent.DFR + 1
+
+        parent:performLayout() -- new one
+    else
+        table.insert(DGUI_ROOT, self)
+        dgui.rootNeedsSorting = true
+        self.DFR = 0
+    end
+
+    dgui.rebuildInputQueue()
+
+    self:fixPos()
+
+end
+
+function dPanel:fixPos() -- Recalculates global position and position of children
+    if self.parent then
+        self.x = self.parent.x + self.localX
+        self.y = self.parent.y + self.localY
+    else
+        self.x = self.localX
+        self.y = self.localY
+    end
+
+    self.matrix:setTranslation(Vector(self.x, self.y, 0)*2)
+
+    for k,v in pairs(self.children) do
+        v:fixPos()
+    end
+
+end
+
+function dPanel:setColor(col) -- Sets color
+
+    self.color = col
+
+end
+
+function dPanel:render() -- Object's render function
+    render.setColor(self.color)
+    render.drawRect(0, 0, self.width, self.height)
+end
+
+dgui.register("DPanel",dPanel)
+
+-------------------
+--- Layout Base ---
+-------------------
+
+local dLayoutBase = {}
+
+function dLayoutBase:init()
+    self.topMargin = 5
+    self.bottomMargin = 5
+    self.leftMargin = 5
+    self.rightMargin = 5
+    self.verticalSpacing = 5
+    self.horizontalSpacing = 5
+    self.expandHorizontal = true
+    self.expandVertical = true
+end
+
+function dLayoutBase:setExpandHorizontal(e)
+    self.expandHorizontal = e
+end
+
+function dLayoutBase:setExpandVertical(e)
+    self.expandVertical = e
+end
+
+function dLayoutBase:setTopMargin(m)
+    self.topMargin = m
+end
+
+function dLayoutBase:setBottomMargin(m)
+    self.bottomMargin = m
+end
+
+function dLayoutBase:setLeftMargin(m)
+    self.leftMargin = m
+end
+
+function dLayoutBase:setRightMargin(m)
+    self.rightMargin = m
+end
+
+function dLayoutBase:setVerticalMargin(m)
+    self.verticalSpacing = m
+end
+
+function dLayoutBase:setHorizontalMargin(m)
+    self.horizontalSpacing = m
+end
+
+function dLayoutBase:setSpacing(m)
+    self.verticalSpacing = m
+    self.horizontalSpacing = m
+end
+
+dgui.register("DLayoutBase", dLayoutBase, "DPanel")
+
+-----------------------
+--- Vertical Layout ---
+-----------------------
+
+local dVerticalLayout = {}
+function dVerticalLayout:doLayout()
+
+    local sumHeight = self.topMargin
+
+    local count = #self.children
+
+    local newHeight = (self.height - self.topMargin - self.bottomMargin + self.verticalSpacing)/count - self.verticalSpacing
+
+    for k,v in pairs(self.children) do
+        local height = v.height
+        local width = v.width
+
+        if self.expandHorizontal then
+            width = self.width - self.leftMargin - self.rightMargin
+        end
+        if self.expandVertical then
+            height = newHeight
+        end
+
+        v:setPos(self.leftMargin, sumHeight)
+
+        sumHeight = sumHeight + height + self.verticalSpacing
+
+        v:setSize(width,height)
+    end
+end
+
+dgui.register("DVerticalLayout", dVerticalLayout, "DLayoutBase")
+
+-------------------------
+--- Horizontal Layout ---
+-------------------------
+
+local dVerticalLayout = {}
+function dVerticalLayout:doLayout()
+
+    local sumWidth = self.leftMargin
+
+    local count = #self.children
+
+    local newWidth = (self.width - self.leftMargin - self.rightMargin + self.horizontalSpacing)/count - self.horizontalSpacing
+
+    for k,v in pairs(self.children) do
+        local height = v.height
+        local width = v.width
+
+        if self.expandHorizontal then
+            width = newWidth
+        end
+        if self.expandVertical then
+            height =  self.height - self.topMargin - self.bottomMargin
+        end
+
+        v:setPos(sumWidth, self.topMargin)
+
+        sumWidth = sumWidth + width + self.horizontalSpacing
+
+        v:setSize(width,height)
+    end
+end
+
+dgui.register("DHorizontalLayout", dVerticalLayout, "DLayoutBase")
+
+-------------
+--- Label ---
+-------------
+
+local dLabel = {}
+
+function dLabel:init()
+    self.catchFocus = false
+    self.textColor = Color(255, 255, 255)
+    self.text = "Label"
+    self.font = defaultFont
+    self.alignment = 5
+
+    render.setFont(self.font)
+    self.textwidth,self.textheight = render.getTextSize(self.text)
+end
+
+function dLabel:setFont(font)
+    self.font = font
+end
+
+function dLabel:setTextColor(col)
+    self.textColor = col
+end
+
+function dLabel:setAlignment(alignment)
+    self.alignment = alignment
+end
+
+function dLabel:setText(text)
+    self.text = text
+    render.setFont(self.font)
+    self.textwidth,self.textheight = render.getTextSize(text)
+end
+
+function dLabel:render()
+
+    local w,h = self.width, self.height
+
+    render.setFont(self.font)
+    render.setColor(self.textColor)
+
+    if self.alignment == 7 then
+        render.drawText(0, 0, self.text, 0)
+    elseif self.alignment == 8 then
+        render.drawText(w/2, 0, self.text, 1)
+    elseif self.alignment == 9 then
+        render.drawText(w, 0, self.text, 2)
+
+
+    elseif self.alignment == 4 then
+        render.drawText(0, h/2 - self.textheight/2, self.text, 0)
+    elseif self.alignment == 5 then
+        render.drawText(w/2, h/2 - self.textheight/2, self.text, 1)
+    elseif self.alignment == 6 then
+        render.drawText(w, h/2 - self.textheight/2, self.text, 2)
+
+
+    elseif self.alignment == 1 then
+        render.drawText(0, h - self.textheight, self.text, 0)
+    elseif self.alignment == 2 then
+        render.drawText(w/2, h - self.textheight, self.text, 1)
+    elseif self.alignment == 3 then
+        render.drawText(w, h - self.textheight, self.text, 2)
+    else
+        self.alignment = 5
+    end
+
+
+end
+
+dgui.register("DLabel", dLabel, "DPanel")
+
+-------------------
+--- Number Wang ---
+-------------------
+
+local dNumberWang = {}
+dNumberWang.onValueChange = _EMPTYFUNC_
+
+local wangFont = render.createFont("Roboto Mono", 60, 400, true, false, false, false, false, true)
+
+function dNumberWang:init()
+    self.color = Color(228, 228, 228)
+    self.value = 10
+    self.max = 100
+    self.min = 0
+    self.incrementValue = 1
+    self.height = 20
+    self.width = 70
+    self.catchFocus = true
+    self.wholeOnly = false
+    self.editMode = false
+    self.button = nil
+    self.text = tostring(self.value)
+end
+
+function dNumberWang:setValue(val)
+    self.value = val
+    self.value = math.min(self.value, self.max)
+    self.value = math.max(self.value, self.min)
+    if self.wholeOnly then
+        self.value = math.floor(self.value)
+    end
+    self.text= tostring(self.value)
+end
+
+function dNumberWang:keyPress(key)
+    if tonumber(key) then
+        if self.text == "0" then self.text = "" end
+        self.text = self.text .. key
+    elseif key == "." and not self.text:find("%.") then
+        self.text = self.text .. key
+    elseif key == "FUNC_RESET" then
+        self.text = ""
+    elseif key == "backspace" then
+        self.text = self.text:sub(1,-2)
+    elseif key == "escape" then
+        dgui.keypad:close()
+         self.editMode = false
+    elseif key =="-" and #self.text == 0 then
+        self.text = self.text .. key
+    elseif key =="enter" then
+        if #self.text == 0 then
+            self.text = "0"
+        end
+        self:setValue(tonumber(self.text))
+         self.editMode = false
+        dgui.keypad:close()
+    end
+end
+
+function dNumberWang:getValue()
+    return self.value
+end
+
+function dNumberWang:setWholeOnly(val)
+    self.wholeOnly = val
+end
+
+function dNumberWang:onStartUsing()
+    if self.button == 1 then
+        self.value = self.value - self.incrementValue
+
+    elseif self.button == 2 then
+        self.value = self.value + self.incrementValue
+    else
+
+        dgui.keypad:open(self,function(keypad,key) self:keyPress(key) end, function(keypad) self.editMode = false; self:setValue(self:getValue()) end)
+        self.editMode = true
+        self.text = ""
+    end
+
+    if not self.editMode then
+        self.value = math.min(self.value, self.max)
+        self.value = math.max(self.value, self.min)
+
+        self.text = tostring(self.value)
+        dgui.runEvent(self, "onValueChange", self.value)
+    end
+end
+
+function dNumberWang:render()
+    local context = dgui.context
+    local curX,curY = context.curX, context.curY
+
+    self.button = nil
+    render.setColor(mc(self.color, 0.3))
+    render.drawRect(0, 0, self.height, self.height)
+
+    render.drawRect(self.width-self.height, 0, self.height, self.height)
+
+    render.setColor(self.color)
+    render.drawRect(self.height, 0, self.width - self.height * 2, self.height)
+
+    local l = self.height*0.5
+    local s = self.height*0.1
+
+    if curX < self.height then
+        s = context.hovered and self.height*0.1 + 2 or self.height*0.1
+        self.button = 1
+    end
+    render.drawRect(self.height/2 - l/2, self.height/2 - s/2, l, s)
+
+    if curX > self.width - self.height then
+        s = context.hovered and self.height*0.1 + 2 or self.height*0.1
+        self.button = 2
+    else
+        s = self.height*0.1
+    end
+
+
+    render.drawRect(self.width - self.height/2 - l/2, self.height/2 - s/2, l, s)
+    render.drawRect(self.width - self.height/2 - s/2, self.height/2 - l/2, s, l)
+
+    render.setFont(self.font)
+    render.setColor(mc(self.color, 0.2))
+
+    render.drawText(self.width/2, self.height/2 - self.textheight/2, self.text, 1)
+
+end
+
+dgui.register("DNumberWang", dNumberWang, "DLabel")
+
+--------------
+--- Button ---
+--------------
+
+local dButton = {}
+
+dButton.doAction = _EMPTYFUNC_
+
+function dButton:init() -- Init function
+    self.catchFocus = true
+    self.color = Color(33, 33, 33)
+    self.stripeColor = Color(0, 169, 250)
+    self.height = 40
+    self.barLength = 0
+    self.alignment = 1
+end
+
+
+function dButton:setStripeColor(col)
+    self.stripeColor = color
+end
+
+function dButton:onStopUsing()
+    local context = dgui.context
+    local curX,curY = context.curX, context.curY
+end
+
+function dButton:render() -- Object's render function
+    local context = dgui.context
+    local curX,curY = context.curX, context.curY
+
+    local targetlight = 0
+    local barLength = self.barLength
+    local targetlength = 8
+
+    if context.pressed then
+        targetlength = self.width
+    elseif context.hovered then
+        targetlength = 16
+    end
+
+    barLength = math.lerp(deltaTime * 10, barLength, targetlength)
+
+    self.barLength = barLength
+
+    render.setColor(self.color)
+    render.drawRect(0, 0, self.width, self.height)
+
+    render.setColor(self.stripeColor)
+    render.drawRect(0, 0, barLength, self.height)
+
+
+    render.setColor(self.textColor)
+    render.setFont(self.font)
+    local w,h = render.getTextSize(self.text)
+    render.drawText(self.width/2, self.height/2 - h/2, self.text, 1)
+
+end
+
+dgui.register("DButton", dButton, "DLabel")
+
+--------------
+--- Slider ---
+--------------
+
+local dSlider = {}
+
+dSlider.onValueChange = _EMPTYFUNC_
+
+function dSlider:init() -- Init function
+    self.color = Color(228, 228, 228)
+    self.height = 20
+    self.progress = 0.3
+    self.value = 0
+    self.whole = false
+    self.max = 1
+    self.min = 0
+    self.progressive = true
+end
+
+function dSlider:onStopUsing()
+    dgui.runEvent(self, "onValueChange")
+end
+
+function dSlider:setMin(v)
+    self.min = v
+end
+
+function dSlider:setProgressive(enable)
+    self.progressive = enable
+end
+
+function dSlider:setMax(v)
+    self.max = v
+end
+
+function dSlider:setValue(v)
+    self.progress = (v - self.min)/(self.max-self.min)
+end
+
+function dSlider:getValue()
+    return self.value
+end
+
+function dSlider:setWholeOnly(enable)
+    self.whole = enable
+end
+
+function dSlider:render() -- Object's render function
+    local context = dgui.context
+    local curX,curY = context.curX, context.curY
+
+
+    local s = self.height/4
+    local x = curX - s
+    local p = x/(self.width - s * 2)
+
+    p = math.max(p, 0)
+    p = math.min(p, 1)
+
+    if context.pressed then
+        self.progress = p
+    end
+
+    self.value = self.min + (self.max - self.min) * self.progress
+    if self.whole then self.value = math.round(self.value) end
+    self.progress = (self.value - self.min)/(self.max-self.min)
+
+    render.setColor(mc(self.color, 0.8))
+    render.drawRect(0, 3, self.width, self.height - 6)
+
+    if self.progressive then
+        render.setColor(self.color)
+        render.drawRect(0, 3, self.width * self.progress, self.height - 6)
+    end
+
+    render.setColor(mc(self.color, 0.3))
+
+    render.drawRect(math.floor((self.width - s * 2) * self.progress), 0, math.floor(self.height - self.height/2), self.height)
+
+
+end
+
+dgui.register("DSlider", dSlider, "DPanel")
+
+-----------------------
+--- Slider Vertical ---
+-----------------------
+
+local dSliderVertical = {}
+
+function dSliderVertical:init() -- Init function
+    self.width = 20
+    self.height = 100
+    self.progressive = false
+end
+
+function dSliderVertical:render(curX, curY) -- Object's render function
+    local context = dgui.context
+    local curX,curY = context.curX, context.curY
+
+    local s = self.width/4
+    local y = curY - s
+    local p = y/(self.height - s * 2)
+
+    p = math.max(p, 0)
+    p = math.min(p, 1)
+
+    if context.pressed then
+        self.progress = p
+    end
+
+    self.value = self.min + (self.max - self.min) * self.progress
+    if self.whole then self.value = math.round(self.value) end
+    self.progress = (self.value - self.min)/(self.max-self.min)
+
+    render.setColor(mc(self.color, 0.8))
+    render.drawRect(3, 0, self.width -6, self.height)
+
+    if self.progressive then
+        render.setColor(self.color)
+        render.drawRect(3, 0, self.width -6, self.height * self.progress)
+    end
+
+    render.setColor(mc(self.color, 0.3))
+
+    render.drawRect(0, math.floor((self.height - s * 2) * self.progress), self.width, math.floor(self.width - self.width/2))
+
+
+end
+
+dgui.register("DSliderVertical", dSliderVertical, "DSlider")
+
+----------------
+--- Checkbox ---
+----------------
+
+local dCheckbox = {}
+
+dCheckbox.onValueChange = _EMPTYFUNC_
+
+function dCheckbox:init() -- Init function
+    self.color = Color(0, 169, 250)
+    self.offColor = Color(128,128,128)
+    self.height = 20
+    self.width = 30
+    self.value = true
+    self.animprogress = 0
+end
+
+function dCheckbox:onStartUsing()
+    self.value = not self.value
+    dgui.runEvent(self,"onValueChange",self.value)
+end
+
+dCheckbox.onKeyUp = _EMPTYFUNC_
+
+function dCheckbox:render(curX, curY) -- Object's render function
+
+    local s = self.height/4
+
+    local p =  self.animprogress
+
+    local target = self.value and 1 or 0
+
+    p = math.lerp(deltaTime*10 , p, target)
+
+    if p > 0.95 then
+        p = 1
+    end
+
+
+    self.animprogress = p
+
+    local col = mixColor(self.color,self.offColor,p)
+
+    render.setColor(mc(col, 0.8))
+    render.drawRect(0, 3, self.width, self.height - 6)
+
+    render.setColor(col)
+    render.drawRect(0, 3, self.width * p, self.height - 6)
+
+    render.setColor(mc(col, 0.3))
+
+    render.drawRect((self.width - s * 2) * p, 0, self.height - self.height/2, self.height)
+
+end
+
+dgui.register("DCheckbox",dCheckbox,"DPanel")
+
+
+--------------
+--- Keypad ---
+--------------
+
+local dKeypad = {}
+
+local keypad_keys = {
+    1,2,3,"-",4,5,6,"C",7,8,9,"X","<",0,".",unichar("2713")
+}
+
+function dKeypad:init() -- Init function
+    self.keyColor = Color(228,228,228)
+    self.color = Color(32,32,32)
+    self.height = 45
+    self.width = 34 + 11
+    self.font = keyFont
+    render.setFont(keyFont)
+    local w,h = render.getTextSize("123456789.C")
+    self.textheight = h
+    self.button = nil
+    self.text = "0"
+end
+
+function dKeypad:open(obj,onKey,onClose)
+    self:setPos(obj.x + obj.width/2, obj.y + obj.height)
+    self.editing = obj
+    self.onKeypress = onKey
+    self.onClose = onClose
+    self.enabled = true
+    self:forceFocus()
+end
+
+function dKeypad:close()
+    self.editing = nil
+    self.onKeypress = nil
+    self.enabled = false
+    if self.onClose then self:onClose() end
+end
+
+
+function dKeypad:onStartUsing()
+    if self.button then
+        local key = tostring(keypad_keys[self.button])
+        if key == unichar("2713") then
+            key = "enter"
+        elseif key == "X" then
+            key = "escape"
+        elseif key =="<" then
+            key = "backspace"
+        elseif key =="C" then
+            key = "FUNC_RESET"
+        end
+        dgui.runEvent(self,"onKeypress", key)
+    end
+end
+
+function dKeypad:onLoseFocus()
+    self:close()
+end
+
+function dKeypad:render() -- Object's render function
+    local context = dgui.context
+    local curX,curY = dgui.context.curX, dgui.context.curY
+
+    render.setColor(self.color)
+    render.drawRect(0, 0, self.width, self.height)
+    render.setFont(self.font)
+
+    for I=1, #keypad_keys do
+        local x = (I - 1)%4
+        local y = math.floor((I - 1)/4)
+        if inBox(curX, curY, x * 22 + 2, y * 22 + 2, 20, 20) then
+            render.setColor(mc(self.keyColor, 0.5))
+            self.button = I
+        else
+            if keypad_keys[I] == "X" or keypad_keys[I] == unichar("2713") then
+                render.setColor(mc(self.keyColor, 0.8))
+
+            else
+                render.setColor(self.keyColor)
+            end
+
+        end
+
+        render.drawRect(x * 22 + 2, y * 22 + 2, 20, 20)
+        render.setColor(self.color)
+        render.drawText(x * 22 + 2 + 10, y * 22 + 2 + 10 - self.textheight/2, tostring(keypad_keys[I]), 1)
+    end
+
+end
+
+dgui.register("DKeypad",dKeypad,"DPanel")
+
+
+dgui.keypad = dgui.create("DKeypad")
+dgui.keypad.priority = math.huge
+dgui.keypad.enabled = false
+return dgui

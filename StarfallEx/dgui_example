@@ -1,0 +1,73 @@
+--@name dGUI test
+--@author
+--@client
+--@include libs/dgui.txt
+
+local dgui = require("libs/dgui.txt")
+
+hook.add("inputPressed","",dgui.keyDown)
+hook.add("inputReleased","",dgui.keyUp)
+
+
+local p1 = dgui.create("DPanel",nil, "panel1")
+p1:setPos(256,256)
+
+local slider = dgui.create("DSlider",nil, "slider")
+slider:setPos(10,100)
+slider:setWholeOnly(true)
+slider:setMax(10)
+
+local checkbox = dgui.create("DCheckbox",nil, "checkbox")
+checkbox:setPos(10,300)
+checkbox.onValueChange = function(self, val) 
+    dgui._DEBUG = val
+end
+
+local checkbox2 = dgui.create("DCheckbox",nil, "checkbox")
+checkbox2:setPos(10,360)
+checkbox2.onValueChange = function(self, val) 
+    dgui._ENABLE_SCISSOR = val
+end
+
+local sliderVertical = dgui.create("DSliderVertical",nil, "slidervert")
+
+  
+sliderVertical:setPos(356,256)
+
+local vertical = dgui.create("DVerticalLayout",nil, "vertical")
+vertical:setParent(p1)
+vertical:setSize(p1.width,100*50)
+vertical:setExpandVertical(false)
+
+local horizontal = dgui.create("DHorizontalLayout",nil, "horizontal")
+horizontal:setSize(400,40)
+horizontal:setPos(10,10)
+
+
+for I=1, 100 do
+    local b = dgui.create("DButton",vertical, "Button_"..I)
+    b:setText("Button"..I)
+end
+
+for I=1, 4 do
+    local b = dgui.create("DButton",horizontal, "Button2_"..I)
+end
+
+
+
+local b = dgui.create("DNumberWang",nil, "numberWang")
+b:setPos(512-100,512-100)
+b.wholeOnly = true
+
+hook.add("think","thing",dgui.think)
+
+
+hook.add("render","render", function()
+    
+    render.setColor(Color())
+    render.drawRect(0,0,512,512)
+    dgui.render()
+    
+    vertical:setPos(-50,  -vertical.height * sliderVertical.value)
+end)
+

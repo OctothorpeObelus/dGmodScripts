@@ -4,6 +4,14 @@
 
 require("fontAwesome.txt")
 
+--[[
+    TODO:
+
+        - Docking!
+        - Priorities (BringToFront, MoveBack etc)
+        - Grid Layout
+]]
+
 function render.drawCircle( x, y, radius, seg )
     local cir = {}
 
@@ -28,8 +36,12 @@ local dgui = {
         hovered = false,
         pressed = false,
         focused = false,
-    }
+    },
+    Canvas = nil,
 }
+
+local dgui_runEvent
+
 local InputCaughtLastFrame = false
 ---------------
 ------
@@ -43,10 +55,11 @@ render.createRenderTarget("dgui_buffer")
 ---------------
 ------
 ---------------
+
+local DGUI_CANVAS = nil
+
 local DGUI_CLASSES = {}
-local DGUI_ROOT = {}
 local LAYOUT_QUEUE = {}
-local INPUT_QUEUE = {}
 
 ---------------
 ------
@@ -88,17 +101,9 @@ local function initElement(class,obj)
     end
     if class.init then
 	       class.init(obj)
-        obj:fixPos()
-
     end
 end
 
-local function addToInputQueue(pnl)
-    table.insert(INPUT_QUEUE, pnl)
-    for k,v in pairs(pnl.children) do
-        addToInputQueue(v)
-    end
-end
 
 local function renderObject(obj, minx, miny, maxx, maxy)
     if not obj.enabled then return end
@@ -107,6 +112,8 @@ local function renderObject(obj, minx, miny, maxx, maxy)
         obj.visible = false
         return
     end
+
+
 
     obj.visible = true
     obj.realX = minx
@@ -117,6 +124,7 @@ local function renderObject(obj, minx, miny, maxx, maxy)
 
 
     if dgui._ENABLE_SCISSOR then
+
         render.enableScissorRect(minx*2, miny*2, maxx*2, maxy*2)
     end
 
@@ -125,7 +133,7 @@ local function renderObject(obj, minx, miny, maxx, maxy)
         obj.width = obj.width * 2
         obj.height = obj.height * 2
 
-        dgui.runEvent(obj, "render")
+        dgui_runEvent(obj, "render")
 
         obj.width = w
         obj.height = h
@@ -137,7 +145,7 @@ local function renderObject(obj, minx, miny, maxx, maxy)
         render.setFont(debugFont)
         local hovertext = HOVERED_OBJ == obj and "\n|HOVERED|" or ""
         local presstext = PRESSED_OBJ == obj and "\n|PRESSED|" or ""
-        local dfr = "\n|DFR:"..obj.DFR.."|"
+        local dfr = ""
         local postext = obj.x..","..obj.y.."|"
         render.drawText(obj.realX * 2, obj.realY * 2, obj.name..postext..hovertext..presstext..dfr)
 
@@ -165,6 +173,7 @@ local function renderObject(obj, minx, miny, maxx, maxy)
 
             minx = math.max(minx, v.x)
             miny = math.max(miny, v.y)
+
 
             maxx = math.min(maxx, v.x + v.width)
             maxy = math.min(maxy, v.y + v.height)
@@ -200,10 +209,8 @@ function dgui.runEvent(obj, eventName, ...)
     --
 
 end
+dgui_runEvent = dgui.runEvent
 
-function dgui.rebuildInputQueue()
-    dgui.shouldRebuildInputTree = true
-end
 
 function dgui.register(name, tab, parent)
     local superclass = DGUI_CLASSES[parent]
@@ -215,11 +222,15 @@ function dgui.register(name, tab, parent)
             return nil
         end,
         __super = superclass,
-        __tostring = function() return name or "unknown" end
+        __tostring = function() return name end
     })
 
 
     DGUI_CLASSES[name] = tab
+end
+
+local function isValidDGUI(obj)
+    return obj.valid
 end
 
 function dgui.create(name, parent,debugname)
@@ -245,7 +256,8 @@ function dgui.create(name, parent,debugname)
     ret.catchFocus = true
     ret.matrix = Matrix()
     ret.enabled = true
-
+    ret.valid = true
+    ret.isValid = isValidDGUI
     initElement(DGUI_CLASSES[name], ret)
 
     ret:setParent(parent)
@@ -257,52 +269,17 @@ function dgui.think()
     local curX, curY = dgui.cursorX, dgui.cursorY
     curX = curX or 0
     curY = curY or 0
-    if dgui.rootNeedsSorting then
-        table.sort(DGUI_ROOT,function(a, b)
-            return (a.priority or 0) < (b.priority or 0)
-        end)
-        dgui.rootNeedsSorting = false
-        print("Sorting root")
-    end
 
     if #LAYOUT_QUEUE > 0 then
         table.sort(LAYOUT_QUEUE,function(a, b)
             return (a.priority or 0) > (b.priority or 0)
         end)
         for k,v in pairs(LAYOUT_QUEUE) do
-            dgui.runEvent(v, "doLayout")
+            dgui_runEvent(v, "doLayout")
             v.shouldPerformLayout  = false
         end
         LAYOUT_QUEUE = {}
-        print("Layouting")
     end
-
-    local caught = false
-    if dgui.shouldRebuildInputTree then
-        INPUT_QUEUE = {}
-        for k,v in pairs(DGUI_ROOT) do
-            addToInputQueue(v)
-        end
-        local tab = {}
-        local c = #INPUT_QUEUE
-        for I = 1, c do
-            tab[I] = INPUT_QUEUE[c-I+1]
-        end
-        INPUT_QUEUE = tab
-        dgui.shouldRebuildInputTree = false
-        print("Rebuilding input tree")
-    end
-
-    --[[ That's old and slow, should be removed
-    local visible = 0
-    for k,v in ipairs(INPUT_QUEUE) do
-        if not v.enabled or not v.visible or not v.catchFocus then continue end
-        visible = visible + 1
-        if inBox(curX, curY, v.realX, v.realY, v.realWidth, v.realHeight) then
-            HOVERED_OBJ = v
-            break
-        end
-    end]]
 end
 
 function dgui.render()
@@ -312,24 +289,22 @@ function dgui.render()
 
     InputCaughtLastFrame = (dgui.cursorX == nil) -- if it's nil it means we dont need process input anyway, so mark it as processed
 
-    HOVERED_OBJ = NEW_HOVERED_OBJ --that's because hovered obj is actually frame late to optimise rendering, noone notices it anyway
     NEW_HOVERED_OBJ = nil
-
     deltaTime = timer.curtime() - lTime
     if deltaTime > 1/dgui.FPS then
 
         render.selectRenderTarget("dgui_buffer")
         render.clear(Color(0,0,0,0))
 
-        for k,v in pairs(DGUI_ROOT) do
-            renderObject(v, v.x, v.y, v.x + v.width, v.y + v.height)
-        end
+        renderObject(DGUI_CANVAS, 0,0,512,512)
+
 
         render.disableScissorRect()
         render.selectRenderTarget()
         lTime = timer.curtime()
     end
 
+    HOVERED_OBJ = NEW_HOVERED_OBJ --that's because hovered obj is actually frame late to optimise rendering, noone notices it anyway
 
     render.setRenderTargetTexture("dgui_buffer")
     render.setRGBA(255,255,255,255)
@@ -340,42 +315,54 @@ function dgui.keyDown(key)
     if key == USE_KEY then
         dgui.setFocusedObject(HOVERED_OBJ)
         PRESSED_OBJ = HOVERED_OBJ
-        dgui.runEvent(FOCUSED_OBJ, "onStartUsing")
+        dgui_runEvent(FOCUSED_OBJ, "onStartUsing")
     end
-    dgui.runEvent(FOCUSED_OBJ, "onKeyDown", key)
+    dgui_runEvent(FOCUSED_OBJ, "onKeyDown", key)
 end
 
 function dgui.keyUp(key)
 
-    dgui.runEvent(FOCUSED_OBJ, "onKeyUp", key)
+    dgui_runEvent(FOCUSED_OBJ, "onKeyUp", key)
 
     if key == USE_KEY then
-        dgui.runEvent(PRESSED_OBJ, "onStopUsing", key)
+        dgui_runEvent(PRESSED_OBJ, "onStopUsing", key)
         PRESSED_OBJ = nil
     end
 end
 
 function dgui.setFocusedObject(obj)
     if FOCUSED_OBJ == obj then return end
-    dgui.runEvent(FOCUSED_OBJ, "onLoseFocus")
+    dgui_runEvent(FOCUSED_OBJ, "onLoseFocus")
     FOCUSED_OBJ = obj
-    dgui.runEvent(FOCUSED_OBJ, "onFocus")
+    dgui_runEvent(FOCUSED_OBJ, "onFocus")
 end
+
+-------------------------
+--- Canvas (Internal) ---
+-------------------------
+
+local dCanvas = {}
+function dCanvas:init()
+    self.localX = 0
+    self.localY = 0
+    self.x = 0
+    self.y = 0
+    self.width = 512
+    self.height = 512
+    self.matrix:setTranslation(Vector())
+end
+function dCanvas:performLayout() end
+function dCanvas:setParent() end
+dgui.register("_CANVAS_",dCanvas)
+
+dgui.Canvas = dgui.create("_CANVAS_")
+DGUI_CANVAS = dgui.Canvas
 
 -------------
 --- Panel ---
 -------------
 
 local dPanel = {}
-
-dPanel.onKeyDown = _EMPTYFUNC_
-dPanel.onKeyUp = _EMPTYFUNC_
-dPanel.onStartUsing = _EMPTYFUNC_
-dPanel.onStopUsing = _EMPTYFUNC_
-dPanel.doLayout = _EMPTYFUNC_
-dPanel.onFocus = _EMPTYFUNC_
-dPanel.onLoseFocus = _EMPTYFUNC_
-
 
 function dPanel:performLayout()
     if not self.shouldPerformLayout then
@@ -384,7 +371,7 @@ function dPanel:performLayout()
     end
 end
 
-function dPanel:init() -- Init function
+function dPanel:init()
     self.color = Color(11, 11, 11)
 end
 
@@ -393,11 +380,8 @@ function dPanel:enableInput(enable)
 end
 
 function dPanel:setPos(x,y) -- Sets position
-    x = math.floor(x)
-    y = math.floor(y)
-
-    self.localX = x
-    self.localY = y
+    self.localX = math.floor(x)
+    self.localY =  math.floor(y)
     self:fixPos()
 
 end
@@ -407,11 +391,8 @@ function dPanel:forceFocus()
 end
 
 function dPanel:setSize(w,h)
-    w = math.floor(w)
-    h = math.floor(h)
-
-    self.width = w
-    self.height = h
+    self.width = math.floor(w)
+    self.height = math.floor(h)
 
     if self.parent then
         self.parent:performLayout()
@@ -419,46 +400,40 @@ function dPanel:setSize(w,h)
     self:performLayout()
 end
 
+function dPanel:remove()
+    self.valid = false
+    for k,v in pairs(self.children) do
+        v:remove()
+    end
+    table.removeByValue(self.parent.children,self)
+    table.removeByValue(LAYOUT_QUEUE,self)
+end
+
 function dPanel:setParent(parent) -- Sets parent
     if parent == self then
-        error("You dumb moron, you cant parent to self!")
+        error("Can't parent to self!")
     end
-    if not self.parent then
-        if table.hasValue(DGUI_ROOT,self) then
-            table.removeByValue(DGUI_ROOT, self)
-        end
-    else
-        table.removeByValue(parent.children, self)
-        performLayout(parent) -- Old one
+    parent = parent or DGUI_CANVAS
+    if self.parent then
+        table.removeByValue(self.parent.children, self)
+        self.parent:performLayout(self.parent) -- Old one
 
     end
 
     self.parent = parent
-    if parent then
-        table.insert(parent.children, self)
-        self.DFR = self.parent.DFR + 1
+    table.insert(parent.children, self)
 
-        parent:performLayout() -- new one
-    else
-        table.insert(DGUI_ROOT, self)
-        dgui.rootNeedsSorting = true
-        self.DFR = 0
-    end
-
-    dgui.rebuildInputQueue()
+    parent:performLayout() -- new one
 
     self:fixPos()
 
 end
 
 function dPanel:fixPos() -- Recalculates global position and position of children
-    if self.parent then
-        self.x = self.parent.x + self.localX
-        self.y = self.parent.y + self.localY
-    else
-        self.x = self.localX
-        self.y = self.localY
-    end
+
+    self.x = self.parent.x + self.localX
+    self.y = self.parent.y + self.localY
+
 
     self.matrix:setTranslation(Vector(self.x, self.y, 0)*2)
 
@@ -474,7 +449,7 @@ function dPanel:setColor(col) -- Sets color
 
 end
 
-function dPanel:render() -- Object's render function
+function dPanel:render()
     render.setColor(self.color)
     render.drawRect(0, 0, self.width, self.height)
 end
@@ -763,7 +738,7 @@ function dNumberWang:onStartUsing()
         self.value = math.max(self.value, self.min)
 
         self.text = tostring(self.value)
-        dgui.runEvent(self, "onValueChange", self.value)
+        dgui_runEvent(self, "onValueChange", self.value)
     end
 end
 
@@ -817,7 +792,7 @@ local dButton = {}
 
 dButton.doAction = _EMPTYFUNC_
 
-function dButton:init() -- Init function
+function dButton:init()
     self.catchFocus = true
     self.color = Color(33, 33, 33)
     self.stripeColor = Color(0, 169, 250)
@@ -836,7 +811,7 @@ function dButton:onStopUsing()
     local curX,curY = context.curX, context.curY
 end
 
-function dButton:render() -- Object's render function
+function dButton:render()
     local context = dgui.context
     local curX,curY = context.curX, context.curY
 
@@ -878,7 +853,7 @@ local dSlider = {}
 
 dSlider.onValueChange = _EMPTYFUNC_
 
-function dSlider:init() -- Init function
+function dSlider:init()
     self.color = Color(228, 228, 228)
     self.height = 20
     self.progress = 0.3
@@ -890,7 +865,7 @@ function dSlider:init() -- Init function
 end
 
 function dSlider:onStopUsing()
-    dgui.runEvent(self, "onValueChange")
+    dgui_runEvent(self, "onValueChange")
 end
 
 function dSlider:setMin(v)
@@ -917,7 +892,7 @@ function dSlider:setWholeOnly(enable)
     self.whole = enable
 end
 
-function dSlider:render() -- Object's render function
+function dSlider:render()
     local context = dgui.context
     local curX,curY = context.curX, context.curY
 
@@ -960,13 +935,13 @@ dgui.register("DSlider", dSlider, "DPanel")
 
 local dSliderVertical = {}
 
-function dSliderVertical:init() -- Init function
+function dSliderVertical:init()
     self.width = 20
     self.height = 100
     self.progressive = false
 end
 
-function dSliderVertical:render(curX, curY) -- Object's render function
+function dSliderVertical:render(curX, curY)
     local context = dgui.context
     local curX,curY = context.curX, context.curY
 
@@ -1010,7 +985,7 @@ local dCheckbox = {}
 
 dCheckbox.onValueChange = _EMPTYFUNC_
 
-function dCheckbox:init() -- Init function
+function dCheckbox:init()
     self.color = Color(0, 169, 250)
     self.offColor = Color(128,128,128)
     self.height = 20
@@ -1021,12 +996,12 @@ end
 
 function dCheckbox:onStartUsing()
     self.value = not self.value
-    dgui.runEvent(self,"onValueChange",self.value)
+    dgui_runEvent(self,"onValueChange",self.value)
 end
 
 dCheckbox.onKeyUp = _EMPTYFUNC_
 
-function dCheckbox:render(curX, curY) -- Object's render function
+function dCheckbox:render(curX, curY)
 
     local s = self.height/4
 
@@ -1070,7 +1045,7 @@ local keypad_keys = {
     1,2,3,"-",4,5,6,"C",7,8,9,"X","<",0,".",unichar("2713")
 }
 
-function dKeypad:init() -- Init function
+function dKeypad:init()
     self.keyColor = Color(228,228,228)
     self.color = Color(32,32,32)
     self.height = 45
@@ -1112,7 +1087,7 @@ function dKeypad:onStartUsing()
         elseif key =="C" then
             key = "FUNC_RESET"
         end
-        dgui.runEvent(self,"onKeypress", key)
+        dgui_runEvent(self,"onKeypress", key)
     end
 end
 
@@ -1120,7 +1095,7 @@ function dKeypad:onLoseFocus()
     self:close()
 end
 
-function dKeypad:render() -- Object's render function
+function dKeypad:render()
     local context = dgui.context
     local curX,curY = dgui.context.curX, dgui.context.curY
 

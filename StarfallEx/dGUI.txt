@@ -6,8 +6,8 @@ require("fontAwesome.txt")
 
 --[[
     TODO:
-
-        - Docking!
+    
+        - Improve Docking!
         - Priorities (BringToFront, MoveBack etc)
         - Grid Layout
         - Ability to set cursorPos manually
@@ -93,11 +93,11 @@ local DELTA_TIME = 0
 local function registerAttribute(tab, name, default)
     local lower = name:sub(1,1):lower()..name:sub(2)
     local upper = name:sub(1,1):upper()..name:sub(2)
-
+        
     if not tab["set"..upper] then
         tab["set"..upper] = function(self,val) self[lower] = val end
     end
-
+    
     if not tab["get"..upper] then
         tab["get"..upper] = function(self) return self[lower] end
     end
@@ -123,9 +123,9 @@ end
 --[[ Calls init function of element and it's classe's parents ]]
 local function initElement(class,obj)
     local meta = getmetatable(class)
-
+    
     if meta.__super then
-        initElement(meta.__super,obj)
+        initElement(meta.__super,obj)            
     end
     local fields = rawget(class,"_fields")
     if fields then
@@ -148,12 +148,12 @@ local function checkObjectInput(obj)
             checkObjectInput(v)
         end
     end
-
+    
     if not INPUT_CAUGHT_LAST_FRAME then
         if inBox(dgui.cursorX or 0,dgui.cursorY or 0, obj.realX, obj.realY, obj.realWidth, obj.realHeight) then
             HOVERED_OBJ = obj
             INPUT_CAUGHT_LAST_FRAME = true
-        end
+        end      
     end
 end
 
@@ -166,8 +166,8 @@ local function renderObject(obj, minx, miny, maxx, maxy)
     obj.realY = miny
     obj.realWidth = maxx - minx
     obj.realHeight = maxy - miny
-
-
+    
+    
 
     if dgui._ENABLE_SCISSOR then
         render.enableScissorRect(minx*2, miny*2, maxx*2, maxy*2)
@@ -193,15 +193,15 @@ local function renderObject(obj, minx, miny, maxx, maxy)
         local dfr = ""
         local postext = obj.x..","..obj.y.."|"
         render.drawText(obj.realX * 2, obj.realY * 2, obj.name..postext..hovertext..presstext..dfr)
-
-        render.setColor(Color(255,0,0))
+        
+        render.setColor(Color(255,0,0))        
 
         render.drawRect(obj.realX * 2, obj.realY * 2, obj.realWidth * 2, 1)
         render.drawRect(obj.realX * 2, obj.realY * 2 + obj.realHeight * 2 -1, obj.realWidth * 2, 1)
-
+        
         render.drawRect(obj.realX * 2, obj.realY * 2, 1, obj.realHeight * 2)
         render.drawRect(obj.realX * 2 + obj.realWidth * 2 - 1, obj.realY * 2, 1, obj.realHeight * 2)
-
+    
         render.drawLine(minx*2,miny*2,maxx*2,maxy*2)
     end
 
@@ -218,13 +218,13 @@ local function renderObject(obj, minx, miny, maxx, maxy)
 
             minx = math.max(minx, v.x)
             miny = math.max(miny, v.y)
-
+            
 
             maxx = math.min(maxx, v.x + v.width)
             maxy = math.min(maxy, v.y + v.height)
 
             if not v.enabled then continue end
-
+        
             if maxx <= minx or maxy <= miny then
                 v.visible = false
                 continue
@@ -247,11 +247,11 @@ function dgui.runEvent(obj, eventName, ...)
     -- Setting up context
     dgui.context.curX = ((dgui.cursorX or 0) - obj.x) * 2
     dgui.context.curY = ((dgui.cursorY or 0) - obj.y) * 2
-
+    
     dgui.context.hovered = (obj == HOVERED_OBJ)
     dgui.context.pressed = (obj == PRESSED_OBJ)
     dgui.context.focused = (obj == FOCUSED_OBJ)
-
+    
     if obj[eventName] then
         obj[eventName](obj, ...)
     end
@@ -284,10 +284,10 @@ end
 
 --[[ Creates object ]]
 function dgui.create(name, parent,debugname)
-
+    
     local ret = setmetatable({}, {
 		      __index = DGUI_CLASSES[name]
-	   })
+	   })  
     ret.uid = name.."_"..UID
     UID = UID + 1
     ret.name = debugname or name
@@ -310,10 +310,10 @@ function dgui.create(name, parent,debugname)
     ret.valid = true
     ret.isValid = isValidDGUI
     initElement(DGUI_CLASSES[name], ret)
-
+    
     ret:setParent(parent)
     return ret
-
+    
 end
 
 --[[ This function should be called in think hook ]]
@@ -321,11 +321,11 @@ function dgui.think()
     if not RENDERED_ONCE then return end
     local curX, curY = dgui.cursorX, dgui.cursorY
     curX = curX or 0
-    curY = curY or 0
-
+    curY = curY or 0    
+    
     INPUT_CAUGHT_LAST_FRAME = false -- if it's nil it means we dont need process input anyway, so mark it as processed
     checkObjectInput(DGUI_CANVAS)
-
+    
     if #LAYOUT_QUEUE > 0 then
         table.sort(LAYOUT_QUEUE,function(a, b)
             return (a.priority or 0) > (b.priority or 0)
@@ -344,15 +344,15 @@ function dgui.render()
     dgui.cursorX, dgui.cursorY = render.cursorPos()
     dgui.cursorX = dgui.cursorX or 0
     dgui.cursorY = dgui.cursorY or 0
-
+    
     DELTA_TIME = timer.curtime() - lTime
     if DELTA_TIME > 1/dgui.FPS then
         render.selectRenderTarget("dgui_buffer")
         render.clear(Color(0,0,0,0))
-
+        
         renderObject(DGUI_CANVAS, 0,0,512,512)
 
-
+        
         render.disableScissorRect()
         render.selectRenderTarget()
         lTime = timer.curtime()
@@ -378,7 +378,7 @@ end
 
 --[[ Lets UI know that key was released]]
 function dgui.keyUp(key)
-
+    
     dgui_runEvent(FOCUSED_OBJ, "onKeyUp", key)
 
     if key == USE_KEY then
@@ -408,7 +408,7 @@ function dCanvas:init()
     self.y = 0
     self.width = 512
     self.height = 512
-    self.matrix:setTranslation(Vector())
+    self.matrix:setTranslation(Vector())    
 end
 function dCanvas:performLayout() end
 function dCanvas:setParent() end
@@ -447,41 +447,41 @@ function dPanel:doLayout()
     local leftSize = 0
     local rightSize = 0
     local fills = {}
-
+    
     for k,v in pairs(self.children) do
         local w = v.width
         local h = v.height
         local x = v.localX
         local y = v.localY
-
+    
         if v.dockID == DOCK_NONE then continue
-
-        elseif v.dockID == DOCK_LEFT then
+        
+        elseif v.dockID == DOCK_LEFT then 
             x = leftSize
             y = topSize
             h = self.height - topSize-bottomSize
             leftSize = leftSize + w
-        elseif v.dockID == DOCK_TOP then
+        elseif v.dockID == DOCK_TOP then 
             x = leftSize
             y = topSize
             w = self.width - leftSize-rightSize
             topSize = topSize + h
 
-        elseif v.dockID == DOCK_BOTTOM then
+        elseif v.dockID == DOCK_BOTTOM then 
             x = leftSize
             y = self.height - bottomSize - h
             w = self.width - leftSize-rightSize
             bottomSize = bottomSize + h
-        elseif v.dockID == DOCK_RIGHT then
+        elseif v.dockID == DOCK_RIGHT then 
             x = self.width - rightSize - w
             y = topSize
             h = self.height - topSize-bottomSize
             leftSize = leftSize + w
         elseif v.dockID == DOCK_FILL then
             table.insert(fills,v)
-        end
-
-
+        end             
+        
+        
         v.localX = x
         v.localY = y
         v.width = w
@@ -493,7 +493,7 @@ function dPanel:doLayout()
         v.width = self.width - leftSize - rightSize
         v.height = self.height -topSize - bottomSize
     end
-
+    
 end
 
 function dPanel:performLayout()
@@ -524,7 +524,7 @@ end
 function dPanel:setSize(w,h)
     self.width = math.floor(w)
     self.height = math.floor(h)
-
+    
     if self.parent then
         self.parent:performLayout()
     end
@@ -545,7 +545,7 @@ function dPanel:remove()
 end
 
 function dPanel:setParent(parent) -- Sets parent
-    if parent == self then
+    if parent == self then 
         error("Can't parent to self!")
     end
     parent = parent or DGUI_CANVAS
@@ -554,12 +554,12 @@ function dPanel:setParent(parent) -- Sets parent
         self.parent:performLayout(self.parent) -- Old one
 
     end
-
+    
     self.parent = parent
     table.insert(parent.children, self)
 
-    parent:performLayout() -- new one
-
+    parent:performLayout() -- new one    
+    
     self:fixPos()
 
 end
@@ -569,9 +569,9 @@ function dPanel:fixPos() -- Recalculates global position and position of childre
     self.x = self.parent.x + self.localX
     self.y = self.parent.y + self.localY
 
-
+    
     self.matrix:setTranslation(Vector(self.x, self.y, 0)*2)
-
+    
     for k,v in pairs(self.children) do
         v:fixPos()
     end
@@ -580,7 +580,7 @@ end
 
 function dPanel:render()
     render.setColor(self.color)
-    render.drawRect(0, 0, self.width, self.height)
+    render.drawRect(0, 0, self.width, self.height)    
 end
 
 dgui.register("DPanel",dPanel)
@@ -600,7 +600,7 @@ registerAttribute(dLayoutBase, "rightMargin", 5)
 registerAttribute(dLayoutBase, "verticalSpacing", 5)
 registerAttribute(dLayoutBase, "horizontalSpacing", 5)
 registerAttribute(dLayoutBase, "topMargin", 5)
-
+ 
 function dLayoutBase:setSpacing(m)
     self.verticalSpacing = m
     self.horizontalSpacing = m
@@ -616,26 +616,26 @@ local dVerticalLayout = {}
 function dVerticalLayout:doLayout()
 
     local sumHeight = self.topMargin
-
+    
     local count = #self.children
-
+    
     local newHeight = (self.height - self.topMargin - self.bottomMargin + self.verticalSpacing)/count - self.verticalSpacing
-
+ 
     for k,v in pairs(self.children) do
         local height = v.height
         local width = v.width
-
+        
         if self.expandHorizontal then
             width = self.width - self.leftMargin - self.rightMargin
         end
         if self.expandVertical then
             height = newHeight
         end
-
+        
         v:setPos(self.leftMargin, sumHeight)
-
+        
         sumHeight = sumHeight + height + self.verticalSpacing
-
+        
         v:setSize(width,height)
     end
 end
@@ -650,26 +650,26 @@ local dVerticalLayout = {}
 function dVerticalLayout:doLayout()
 
     local sumWidth = self.leftMargin
-
+    
     local count = #self.children
-
+    
     local newWidth = (self.width - self.leftMargin - self.rightMargin + self.horizontalSpacing)/count - self.horizontalSpacing
-
+ 
     for k,v in pairs(self.children) do
         local height = v.height
         local width = v.width
-
+        
         if self.expandHorizontal then
             width = newWidth
         end
         if self.expandVertical then
             height =  self.height - self.topMargin - self.bottomMargin
         end
-
+        
         v:setPos(sumWidth, self.topMargin)
-
+        
         sumWidth = sumWidth + width + self.horizontalSpacing
-
+        
         v:setSize(width,height)
     end
 end
@@ -691,13 +691,13 @@ end
 function dLabel:setFont(font)
     self.font = font
     render.setFont(self.font)
-    self.textwidth,self.textheight = render.getTextSize(text)
+    self.textwidth,self.textheight = render.getTextSize(self.text)
 end
 
 function dLabel:setText(text)
     self.text = text
     render.setFont(self.font)
-    self.textwidth,self.textheight = render.getTextSize(text)
+    self.textwidth,self.textheight = render.getTextSize(self.text)
 end
 
 registerAttribute(dLabel,"font", defaultFont)
@@ -714,13 +714,13 @@ function dLabel:render()
     render.setColor(self.textColor)
 
     if self.alignment == 7 then
-        render.drawText(0, 0, self.text, 0)
+        render.drawText(0, 0, self.text, 0)        
     elseif self.alignment == 8 then
         render.drawText(w/2, 0, self.text, 1)
     elseif self.alignment == 9 then
         render.drawText(w, 0, self.text, 2)
-
-
+        
+            
     elseif self.alignment == 4 then
         render.drawText(0, h/2 - self.textheight/2, self.text, 0)
     elseif self.alignment == 5 then
@@ -738,8 +738,8 @@ function dLabel:render()
     else
         self.alignment = 5
     end
-
-
+    
+    
 end
 
 dgui.register("DLabel", dLabel, "DPanel")
@@ -808,7 +808,7 @@ end
 function dNumberWang:onStartUsing()
     if self.button == 1 then
         self.value = self.value - self.incrementValue
-
+        
     elseif self.button == 2 then
         self.value = self.value + self.incrementValue
     else
@@ -817,11 +817,11 @@ function dNumberWang:onStartUsing()
         self.editMode = true
         self.text = ""
     end
-
+    
     if not self.editMode then
         self.value = math.min(self.value, self.max)
         self.value = math.max(self.value, self.min)
-
+        
         self.text = tostring(self.value)
         dgui_runEvent(self, "onValueChange", self.value)
     end
@@ -842,7 +842,7 @@ function dNumberWang:render()
 
     local l = self.height*0.5
     local s = self.height*0.1
-
+    
     if curX < self.height then
         s = context.hovered and self.height*0.1 + 2 or self.height*0.1
         self.button = 1
@@ -859,10 +859,10 @@ function dNumberWang:render()
 
     render.drawRect(self.width - self.height/2 - l/2, self.height/2 - s/2, l, s)
     render.drawRect(self.width - self.height/2 - s/2, self.height/2 - l/2, s, l)
-
+    
     render.setFont(self.font)
     render.setColor(mc(self.color, 0.2))
-
+    
     render.drawText(self.width/2, self.height/2 - self.textheight/2, self.text, 1)
 
 end
@@ -879,15 +879,11 @@ dButton.doAction = _EMPTYFUNC_
 
 function dButton:init()
     self.catchFocus = true
-    self.color = Color(33, 33, 33)
-    self.stripeColor = Color(0, 169, 250)
+    self.color = Color(0, 169, 250)
     self.height = 40
     self.barLength = 0
     self.alignment = 1
 end
-
-
-registerAttribute(dButton,"stripeColor")
 
 function dButton:onStopUsing()
     local context = dgui.context
@@ -901,21 +897,21 @@ function dButton:render()
     local targetlight = 0
     local barLength = self.barLength
     local targetlength = 8
-
+    
     if context.pressed then
         targetlength = self.width
     elseif context.hovered then
         targetlength = 16
     end
-
+    
     barLength = math.lerp(DELTA_TIME * 10, barLength, targetlength)
+    
+    self.barLength = barLength    
 
-    self.barLength = barLength
+    render.setColor(mc(self.color, 0.3))
+    render.drawRect(0, 0, self.width, self.height)    
 
     render.setColor(self.color)
-    render.drawRect(0, 0, self.width, self.height)
-
-    render.setColor(self.stripeColor)
     render.drawRect(0, 0, barLength, self.height)
 
 
@@ -946,7 +942,7 @@ function dSlider:onStopUsing()
     dgui_runEvent(self, "onValueChange")
 end
 
-function dSlider:setValue(v)
+function dSlider:setValue(v) 
     self.progress = (v - self.min)/(self.max-self.min)
 end
 registerAttribute(dSlider, "value", 0)
@@ -960,35 +956,35 @@ registerAttribute(dSlider, "wholeOnly", false)
 function dSlider:render()
     local context = dgui.context
     local curX,curY = context.curX, context.curY
-
-
+    
+    
     local s = self.height/4
     local x = curX - s
     local p = x/(self.width - s * 2)
-
+    
     p = math.max(p, 0)
     p = math.min(p, 1)
-
+    
     if context.pressed then
         self.progress = p
     end
-
+    
     self.value = self.min + (self.max - self.min) * self.progress
     if self.whole then self.value = math.round(self.value) end
     self.progress = (self.value - self.min)/(self.max-self.min)
-
+    
     render.setColor(mc(self.color, 0.8))
-    render.drawRect(0, 3, self.width, self.height - 6)
+    render.drawRect(0, 3, self.width, self.height - 6)    
 
     if self.progressive then
         render.setColor(self.color)
-        render.drawRect(0, 3, self.width * self.progress, self.height - 6)
+        render.drawRect(0, 3, self.width * self.progress, self.height - 6)    
     end
-
+    
     render.setColor(mc(self.color, 0.3))
-
-    render.drawRect(math.floor((self.width - s * 2) * self.progress), 0, math.floor(self.height - self.height/2), self.height)
-
+    
+    render.drawRect(math.floor((self.width - s * 2) * self.progress), 0, math.floor(self.height - self.height/2), self.height)    
+    
 
 end
 
@@ -1013,30 +1009,30 @@ function dSliderVertical:render(curX, curY)
     local s = self.width/4
     local y = curY - s
     local p = y/(self.height - s * 2)
-
+    
     p = math.max(p, 0)
     p = math.min(p, 1)
-
+    
     if context.pressed then
         self.progress = p
     end
-
+    
     self.value = self.min + (self.max - self.min) * self.progress
     if self.whole then self.value = math.round(self.value) end
     self.progress = (self.value - self.min)/(self.max-self.min)
-
+    
     render.setColor(mc(self.color, 0.8))
-    render.drawRect(3, 0, self.width -6, self.height)
+    render.drawRect(3, 0, self.width -6, self.height)    
 
     if self.progressive then
         render.setColor(self.color)
-        render.drawRect(3, 0, self.width -6, self.height * self.progress)
+        render.drawRect(3, 0, self.width -6, self.height * self.progress)    
     end
-
+    
     render.setColor(mc(self.color, 0.3))
-
-    render.drawRect(0, math.floor((self.height - s * 2) * self.progress), self.width, math.floor(self.width - self.width/2))
-
+    
+    render.drawRect(0, math.floor((self.height - s * 2) * self.progress), self.width, math.floor(self.width - self.width/2))    
+    
 
 end
 
@@ -1064,34 +1060,34 @@ end
 dCheckbox.onKeyUp = _EMPTYFUNC_
 
 function dCheckbox:render(curX, curY)
-
+    
     local s = self.height/4
-
+    
     local p =  self.animprogress
-
+    
     local target = self.value and 1 or 0
-
+    
     p = math.lerp(DELTA_TIME*10 , p, target)
 
     if p > 0.95 then
         p = 1
     end
-
-
+    
+    
     self.animprogress = p
-
+    
     local col = mixColor(self.color,self.offColor,p)
-
+    
     render.setColor(mc(col, 0.8))
-    render.drawRect(0, 3, self.width, self.height - 6)
+    render.drawRect(0, 3, self.width, self.height - 6)    
 
     render.setColor(col)
-    render.drawRect(0, 3, self.width * p, self.height - 6)
-
+    render.drawRect(0, 3, self.width * p, self.height - 6)    
+    
     render.setColor(mc(col, 0.3))
-
-    render.drawRect((self.width - s * 2) * p, 0, self.height - self.height/2, self.height)
-
+    
+    render.drawRect((self.width - s * 2) * p, 0, self.height - self.height/2, self.height)    
+    
 end
 
 registerAttribute(dCheckbox,"value", false)
@@ -1162,9 +1158,9 @@ end
 function dKeypad:render()
     local context = dgui.context
     local curX,curY = dgui.context.curX, dgui.context.curY
-
+    
     render.setColor(self.color)
-    render.drawRect(0, 0, self.width, self.height)
+    render.drawRect(0, 0, self.width, self.height)    
     render.setFont(self.font)
 
     for I=1, #keypad_keys do
@@ -1176,17 +1172,17 @@ function dKeypad:render()
         else
             if keypad_keys[I] == "X" or keypad_keys[I] == unichar("2713") then
                 render.setColor(mc(self.keyColor, 0.8))
-
+        
             else
-                render.setColor(self.keyColor)
+                render.setColor(self.keyColor)    
             end
 
         end
 
         render.drawRect(x * 22 + 2, y * 22 + 2, 20, 20)
         render.setColor(self.color)
-        render.drawText(x * 22 + 2 + 10, y * 22 + 2 + 10 - self.textheight/2, tostring(keypad_keys[I]), 1)
-    end
+        render.drawText(x * 22 + 2 + 10, y * 22 + 2 + 10 - self.textheight/2, tostring(keypad_keys[I]), 1) 
+    end    
 
 end
 

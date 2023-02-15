@@ -1,6 +1,6 @@
 --@name dGUI
 --@author D.
---@include fontAwesome.txt
+--@include https://raw.githubusercontent.com/OctothorpeObelus/dGmodScripts/master/StarfallEx/fontAwesome.txt as fontAwesome.txt
 
 require("fontAwesome.txt")
 
